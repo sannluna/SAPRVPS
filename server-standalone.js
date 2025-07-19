@@ -170,7 +170,7 @@ app.get('/health', (req, res) => {
 app.get('/api/videos', async (req, res) => {
   try {
     if (!db) throw new Error('Database not available');
-    const result = await db.query('SELECT * FROM videos ORDER BY "playlistOrder" ASC');
+    const result = await db.query('SELECT * FROM videos ORDER BY playlist_order ASC');
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching videos:', error);
@@ -1103,7 +1103,7 @@ class RTMPStreamManager {
 
   async loadPlaylist() {
     try {
-      const result = await db.query('SELECT * FROM videos ORDER BY "playlistOrder" ASC');
+      const result = await db.query('SELECT * FROM videos ORDER BY playlist_order ASC');
       this.playlist = result.rows;
       console.log(`Loaded playlist with ${this.playlist.length} videos`);
     } catch (error) {
