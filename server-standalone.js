@@ -1,40 +1,48 @@
 // Standalone server for Docker deployment  
 // Removes Replit-specific dependencies and uses standard Node.js patterns
 
-const express = require('express');
-const { createServer } = require('http');
-const path = require('path');
-const fs = require('fs');
-const pg = require('pg');
-const multer = require('multer');
+import express from 'express';
+import { createServer } from 'http';
+import path from 'path';
+import fs from 'fs';
+import pg from 'pg';
+import multer from 'multer';
+import { fileURLToPath } from 'url';
 
-// Try to load fluent-ffmpeg for video duration detection
-let ffmpeg;
-try {
-  ffmpeg = require('fluent-ffmpeg');
-} catch (error) {
-  console.log('fluent-ffmpeg not available, duration detection disabled');
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Simple ID generator (fallback if nanoid fails)
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-let nanoid;
-try {
-  nanoid = require('nanoid').nanoid;
-} catch (error) {
-  console.log('Using fallback ID generator');
-  nanoid = generateId;
+// Initialize dependencies
+let ffmpeg, nanoid;
+
+async function initializeDependencies() {
+  // Try to load fluent-ffmpeg for video duration detection
+  try {
+    const fluentFfmpeg = await import('fluent-ffmpeg');
+    ffmpeg = fluentFfmpeg.default;
+  } catch (error) {
+    console.log('fluent-ffmpeg not available, duration detection disabled');
+  }
+
+  try {
+    const nanoidModule = await import('nanoid');
+    nanoid = nanoidModule.nanoid;
+  } catch (error) {
+    console.log('Using fallback ID generator');
+    nanoid = generateId;
+  }
 }
 
 const { Pool } = pg;
-// __dirname is available in CommonJS
 
 const app = express();
 const server = createServer(app);
-const port = process.env.PORT || 5000;
+const port = process.env.STANDALONE_PORT || 3000;
 
 // Basic middleware
 app.use(express.json({ limit: '500mb' }));
@@ -1320,8 +1328,19 @@ async function initializeDatabase() {
   }
 }
 
-// Start server
-server.listen(port, '0.0.0.0', async () => {
-  console.log(`Sa Plays Roblox Streamer (Standalone) running on port ${port}`);
-  await initializeDatabase();
-});
+// Start server with async initialization
+async function startServer() {
+  await initializeDependencies();
+  
+  server.listen(port, '0.0.0.0', async () => {
+    console.log(`Sa Plays Roblox Streamer (Standalone) running on port ${port}`);
+    
+    // Initialize database on startup
+    await initializeDatabase();
+    
+    console.log('Server startup complete - ready for streaming!');
+  });
+}
+
+// Start the server
+startServer().catch(console.error);
