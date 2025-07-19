@@ -448,14 +448,52 @@ app.post('/api/stream/set-current', async (req, res) => {
 
 app.post('/api/stream/restart', async (req, res) => {
   try {
-    // Stop then start the stream
-    await db.query('UPDATE "streamStatus" SET status = $1, "startedAt" = NULL', ['offline']);
-    // Brief delay before restarting
-    setTimeout(async () => {
-      await db.query('UPDATE "streamStatus" SET status = $1, "startedAt" = NOW()', ['live']);
-    }, 1000);
+    // Get current stream status to check for selected video
+    const statusResult = await db.query('SELECT * FROM "streamStatus" ORDER BY id DESC LIMIT 1');
+    const streamStatus = statusResult.rows[0];
     
-    res.json({ message: 'Stream restarted successfully' });
+    if (!streamStatus?.currentVideoId) {
+      return res.status(400).json({ error: 'No video selected for streaming' });
+    }
+
+    // Stop all RTMP streams first
+    await rtmpManager.stopAllStreams();
+    
+    // Update status to offline briefly
+    await db.query('UPDATE "streamStatus" SET status = $1, "startedAt" = NULL WHERE id = (SELECT MAX(id) FROM "streamStatus")', ['offline']);
+    
+    // Restart after brief delay
+    setTimeout(async () => {
+      try {
+        // Get stream configuration
+        const configResult = await db.query('SELECT * FROM "streamConfigs" WHERE "isActive" = true ORDER BY id DESC LIMIT 1');
+        const streamConfig = configResult.rows[0];
+        
+        if (streamConfig) {
+          const rtmpConfig = {
+            platform: streamConfig.platform,
+            streamKey: streamConfig.streamKey,
+            rtmpUrl: streamConfig.rtmpUrl,
+            resolution: streamConfig.resolution,
+            framerate: streamConfig.framerate,
+            bitrate: streamConfig.bitrate,
+          };
+
+          // Restart the stream
+          const started = await rtmpManager.startStream(streamStatus.currentVideoId, rtmpConfig);
+          
+          if (started) {
+            await db.query('UPDATE "streamStatus" SET status = $1, "startedAt" = NOW() WHERE id = (SELECT MAX(id) FROM "streamStatus")', ['live']);
+          }
+        }
+      } catch (restartError) {
+        console.error('Error during stream restart:', restartError);
+        await db.query('UPDATE "streamStatus" SET status = $1 WHERE id = (SELECT MAX(id) FROM "streamStatus")', ['error']);
+      }
+    }, 2000);
+    
+    const updatedStatus = await db.query('SELECT * FROM "streamStatus" ORDER BY id DESC LIMIT 1');
+    res.json(updatedStatus.rows[0]);
   } catch (error) {
     console.error('Error restarting stream:', error);
     res.status(500).json({ error: 'Failed to restart stream' });
@@ -628,19 +666,28 @@ app.post('/api/rtmp/record_done', async (req, res) => {
 
 app.post('/api/videos/reorder', async (req, res) => {
   try {
-    const { videoIds } = req.body;
+    const { videoIds, updates } = req.body;
     
-    if (!Array.isArray(videoIds)) {
-      return res.status(400).json({ error: 'videoIds must be an array' });
+    // Handle both formats: videoIds array or updates array
+    if (videoIds && Array.isArray(videoIds)) {
+      // Handle videoIds format (array of IDs in new order)
+      const promises = videoIds.map((id, index) => 
+        db.query('UPDATE videos SET "playlistOrder" = $1 WHERE id = $2', [index + 1, id])
+      );
+      
+      await Promise.all(promises);
+      res.json({ message: 'Playlist reordered successfully' });
+    } else if (updates && Array.isArray(updates)) {
+      // Handle updates format (array of {id, playlistOrder} objects)
+      const promises = updates.map(update => 
+        db.query('UPDATE videos SET "playlistOrder" = $1 WHERE id = $2', [update.playlistOrder, update.id])
+      );
+      
+      await Promise.all(promises);
+      res.json({ message: 'Playlist reordered successfully' });
+    } else {
+      return res.status(400).json({ message: 'Either videoIds or updates array is required' });
     }
-    
-    // Update playlist order based on the new sequence
-    const promises = videoIds.map((id, index) => 
-      db.query('UPDATE videos SET "playlistOrder" = $1 WHERE id = $2', [index + 1, id])
-    );
-    
-    await Promise.all(promises);
-    res.json({ message: 'Playlist reordered successfully' });
   } catch (error) {
     console.error('Error reordering playlist:', error);
     res.status(500).json({ error: 'Failed to reorder playlist' });
