@@ -1238,7 +1238,7 @@ class RTMPStreamManager {
   }
 }
 
-const rtmpManager = new SimpleRTMPManager();
+const rtmpManager = new RTMPStreamManager();
 
 // Initialize database tables
 async function initializeDatabase() {
